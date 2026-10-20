@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#15171A">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<title>Inspeção de Obra</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/app.css">
+<script src="js/config.js"></script>
+</head>
+<body>
+<div id="app">
+
+<!-- ============ CÓDIGO DA EQUIPE ============ -->
+<section class="tela claro" id="tela-codigo" hidden>
+  <header class="topo-marca">
+    <div class="marca"><span class="quadrado"></span><span>Inspeção de obra</span></div>
+    <p>Registro fotográfico com estaca e coordenadas</p>
+  </header>
+  <form class="corpo" id="form-codigo">
+    <div class="campo">
+      <label for="in-codigo">Código da equipe</label>
+      <input id="in-codigo" type="text" inputmode="numeric" autocomplete="off" placeholder="Informado pelo responsável" required>
+      <p class="ajuda">Pedido só na primeira vez neste celular.</p>
+    </div>
+    <p class="erro" id="codigo-erro" hidden></p>
+    <div class="cresce"></div>
+    <button class="btn primario" type="submit">Continuar</button>
+  </form>
+</section>
+
+<!-- ============ INÍCIO ============ -->
+<section class="tela claro" id="tela-inicio" hidden>
+  <header class="topo-marca">
+    <div class="marca"><span class="quadrado"></span><span>Inspeção de obra</span></div>
+    <p>Registro fotográfico com estaca e coordenadas</p>
+  </header>
+  <form class="corpo" id="form-inicio">
+    <div class="campo">
+      <label for="in-nome">Nome de quem está registrando</label>
+      <input id="in-nome" type="text" autocomplete="name" placeholder="Digite seu nome" required>
+    </div>
+    <div class="campo">
+      <span class="rotulo">O que você vai registrar?</span>
+      <div class="cartoes-modo" role="radiogroup" aria-label="Modo de registro">
+        <button type="button" class="cartao-modo" role="radio" data-modo="rel" aria-checked="true">
+          <span class="radio"><span></span></span>
+          <span><strong>Relatório de inspeção</strong><small>Agrupa as fotos para gerar o relatório depois</small></span>
+        </button>
+        <button type="button" class="cartao-modo" role="radio" data-modo="ind" aria-checked="false">
+          <span class="radio"><span></span></span>
+          <span><strong>Fotos individuais</strong><small>Registros avulsos, sem relatório</small></span>
+        </button>
+      </div>
+    </div>
+    <div class="painel" id="painel-relatorio">
+      <div class="campo">
+        <span class="rotulo">Tipo de relatório</span>
+        <div class="chips" id="chips-tipo"></div>
+      </div>
+      <div class="campo">
+        <label for="in-objeto">Objeto de avaliação</label>
+        <input id="in-objeto" type="text" placeholder="Ex.: drenagem do Corte 18, PN 9+068">
+      </div>
+    </div>
+    <div class="cresce"></div>
+    <button class="btn primario" type="submit" id="btn-iniciar">Iniciar relatório <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></button>
+    <button class="btn link" type="button" id="btn-ver-registros">Ver registros salvos</button>
+  </form>
+</section>
+
+<!-- ============ CÂMERA ============ -->
+<section class="tela escuro" id="tela-camera" hidden>
+  <header class="cam-topo">
+    <div class="cam-titulo">
+      <strong id="cam-titulo">Câmera</strong>
+      <small id="cam-sub"></small>
+    </div>
+    <div class="cam-acoes">
+      <button class="btn-icone" type="button" id="btn-config" aria-label="Configurações">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="9" cy="7" r="2.5" class="preenche"/><circle cx="15" cy="17" r="2.5" class="preenche"/></svg>
+      </button>
+      <button class="btn-contorno" type="button" id="btn-encerrar">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/></svg><span id="btn-encerrar-txt">Encerrar</span>
+      </button>
+    </div>
+  </header>
+  <div class="cam-status">
+    <div class="pilula" id="gps-pilula"><span class="ponto" id="gps-ponto"></span><span id="gps-txt">Buscando GPS…</span></div>
+    <div class="pilula amarela" id="est-pilula" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s7-6.2 7-12a7 7 0 0 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/></svg>
+      <span class="mono" id="est-txt"></span><span id="est-dist"></span>
+    </div>
+    <div class="pilula alerta" id="fora-pilula" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      Fora da faixa
+    </div>
+  </div>
+  <div class="faixa-alerta" id="fora-faixa" role="status" hidden>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    <div><strong>Fora da faixa de domínio</strong><span id="fora-txt"></span></div>
+  </div>
+  <div class="visor" id="visor">
+    <video id="video" playsinline muted autoplay></video>
+    <div class="visor-vazio" id="visor-vazio" hidden>
+      <p id="visor-msg">Câmera indisponível.</p>
+      <button class="btn primario" type="button" id="btn-camera-nativa">Abrir câmera do celular</button>
+    </div>
+    <span class="selo">Prévia da legenda</span>
+    <div class="legenda-previa" id="legenda-previa"></div>
+  </div>
+  <input type="file" id="in-foto" accept="image/*" capture="environment" hidden>
+  <div class="cam-base">
+    <button class="miniatura" type="button" id="btn-registros" aria-label="Ver registros">
+      <img id="mini-img" alt="" hidden><span class="contador" id="mini-cont" hidden>0</span>
+    </button>
+    <button class="obturador" type="button" id="btn-foto" aria-label="Tirar foto"><span></span></button>
+    <button class="btn-redondo" type="button" id="btn-flash" aria-label="Lanterna" aria-pressed="false" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="13 2 4 14 11 14 10 22 20 9 13 9 13 2"/></svg>
+    </button>
+    <span class="espaco-flash" id="espaco-flash"></span>
+  </div>
+  <p class="cam-rodape">Legenda automática ativa · <button type="button" class="link-amarelo" id="btn-config2">ajustar</button></p>
+</section>
+
+<!-- ============ REVISAR ============ -->
+<section class="tela claro" id="tela-revisar" hidden>
+  <header class="barra">
+    <button type="button" class="barra-btn" id="btn-refazer">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="1 4 1 10 7 10"/><path d="M3.5 15a9 9 0 1 0 2.1-9.4L1 10"/></svg>Refazer
+    </button>
+    <h1 id="rev-titulo">Nova foto</h1>
+    <span class="barra-espaco"></span>
+  </header>
+  <div class="corpo rolavel">
+    <div class="foto-previa"><img id="rev-img" alt="Prévia da foto com legenda"></div>
+    <div class="cartao-estaca">
+      <span class="icone-amarelo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s7-6.2 7-12a7 7 0 0 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/></svg></span>
+      <div><strong id="rev-est"></strong><small id="rev-est-info"></small></div>
+    </div>
+    <div class="campo">
+      <label for="in-desc">Descrição do local</label>
+      <textarea id="in-desc" rows="2" placeholder="Ex.: erosão no pé do talude, lado direito"></textarea>
+      <button type="button" class="btn-repetir" id="btn-repetir" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+        <span><strong>Repetir descrição anterior:</strong> <span id="txt-anterior"></span></span>
+      </button>
+    </div>
+    <div class="campo">
+      <span class="rotulo">Categoria</span>
+      <div class="chips" id="chips-cat"></div>
+    </div>
+    <div class="campo">
+      <span class="rotulo">Adicionar à legenda</span>
+      <div class="chips" id="chips-extra"></div>
+    </div>
+    <button class="btn primario" type="button" id="btn-salvar">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>Salvar foto
+    </button>
+  </div>
+</section>
+
+<!-- ============ CONFIGURAÇÕES ============ -->
+<section class="tela claro" id="tela-config" hidden>
+  <header class="barra">
+    <button type="button" class="barra-btn so-icone" id="btn-config-voltar" aria-label="Voltar">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+    <h1>Configurações</h1>
+    <span class="barra-espaco curto"></span>
+  </header>
+  <div class="corpo rolavel">
+    <div class="campo">
+      <span class="rotulo secao">Prévia</span>
+      <div class="previa-cfg" id="previa-cfg"><div class="legenda-previa" id="legenda-cfg"></div></div>
+    </div>
+    <div class="campo">
+      <span class="rotulo secao">Sempre na foto</span>
+      <div class="chips fixos">
+        <span class="chip-fixo">Data e hora</span><span class="chip-fixo">Coordenadas</span><span class="chip-fixo">Estaca e km</span>
+      </div>
+    </div>
+    <div class="campo">
+      <span class="rotulo secao">Opcionais</span>
+      <div class="lista-switch" id="lista-opcionais"></div>
+    </div>
+    <div class="campo">
+      <span class="rotulo secao">Formato</span>
+      <div class="linhas-seg" id="linhas-seg"></div>
+    </div>
+    <div class="campo">
+      <span class="rotulo secao">Cópia na galeria do celular</span>
+      <div class="lista-switch">
+        <div class="linha-switch">
+          <div><strong>Salvar cópia na galeria</strong><small>Além do envio ao Drive</small></div>
+          <button type="button" role="switch" class="switch" id="sw-galeria" aria-checked="false" aria-label="Salvar cópia na galeria"><span></span></button>
+        </div>
+        <div class="galeria-opcoes" id="galeria-opcoes">
+          <strong>Quais versões salvar?</strong>
+          <div class="checks">
+            <button type="button" role="checkbox" class="check" data-gal="com" aria-checked="true"><span class="caixa"></span>Com legenda</button>
+            <button type="button" role="checkbox" class="check" data-gal="sem" aria-checked="false"><span class="caixa"></span>Sem legenda</button>
+          </div>
+          <p class="erro-peq" id="gal-aviso" hidden>Escolha ao menos uma versão.</p>
+          <small>No iPhone, cada foto abre a opção “Salvar imagem”.</small>
+        </div>
+      </div>
+    </div>
+    <div class="campo">
+      <span class="rotulo secao">Base e conexão</span>
+      <div class="info-base">
+        <p id="info-base"></p>
+        <p id="info-servidor"></p>
+        <button type="button" class="btn secundario" id="btn-atualizar-base">Atualizar base de estacas</button>
+        <button type="button" class="btn link" id="btn-trocar-codigo">Trocar código da equipe</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ REGISTROS ============ -->
+<section class="tela claro" id="tela-registros" hidden>
+  <header class="barra">
+    <button type="button" class="barra-btn so-icone" id="btn-reg-voltar" aria-label="Voltar">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+    <h1>Registros</h1>
+    <span class="barra-espaco curto"></span>
+  </header>
+  <div class="corpo">
+    <div class="aviso-envio" id="aviso-envio" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.5 19H7a5 5 0 1 1 1.6-9.7A6 6 0 0 1 20 11a4 4 0 0 1-2.5 8z"/></svg>
+      <div><strong id="aviso-titulo"></strong><small id="aviso-sub"></small></div>
+      <button type="button" class="btn-amarelo-peq" id="btn-enviar">Enviar</button>
+    </div>
+    <div class="chips" id="chips-filtro"></div>
+    <div class="lista-reg" id="lista-reg"></div>
+  </div>
+  <div class="rodape-fixo">
+    <button class="btn primario" type="button" id="btn-nova-foto">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>Nova foto
+    </button>
+  </div>
+</section>
+
+<!-- ============ DIÁLOGO: RELATÓRIO EM ABERTO ============ -->
+<div class="sobreposicao" id="dlg-retomar" hidden>
+  <div class="dialogo" role="dialog" aria-modal="true" aria-labelledby="ret-titulo">
+    <span class="icone-grande"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg></span>
+    <h2 id="ret-titulo">Relatório de inspeção em aberto</h2>
+    <p class="suave">O app foi fechado antes de encerrar este relatório. O que deseja fazer?</p>
+    <div class="cartao-resumo" id="ret-resumo"></div>
+    <button class="btn primario" type="button" id="btn-continuar-rel">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4"/></svg>Continuar relatório anterior
+    </button>
+    <button class="btn secundario" type="button" id="btn-encerrar-novo">Encerrar e iniciar novo</button>
+    <p class="nota">Ao encerrar, as fotos já tiradas continuam no relatório.</p>
+  </div>
+</div>
+
+<!-- ============ FOLHA: ENCERRAR ============ -->
+<div class="sobreposicao baixo" id="dlg-encerrar" hidden>
+  <div class="folha" role="dialog" aria-modal="true" aria-labelledby="enc-titulo">
+    <span class="alca"></span>
+    <h2 id="enc-titulo">Encerrar relatório de inspeção?</h2>
+    <p class="suave">Depois de encerrado, o relatório não recebe novas fotos.</p>
+    <dl class="tabela-resumo" id="enc-resumo"></dl>
+    <p class="nota-icone">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.5 19H7a5 5 0 1 1 1.6-9.7A6 6 0 0 1 20 11a4 4 0 0 1-2.5 8z"/></svg>
+      As fotos pendentes serão enviadas ao Drive automaticamente assim que houver conexão.
+    </p>
+    <button class="btn escuro" type="button" id="btn-confirmar-encerrar">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>Encerrar relatório
+    </button>
+    <button class="btn secundario" type="button" id="btn-cancelar-encerrar">Continuar fotografando</button>
+  </div>
+</div>
+
+<div class="carregando" id="carregando" hidden><div><span class="giro"></span><p id="carregando-txt">Carregando…</p></div></div>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+</div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
