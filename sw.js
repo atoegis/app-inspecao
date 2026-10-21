@@ -1,5 +1,5 @@
 // Service worker: guarda o app no celular para abrir e funcionar sem sinal.
-const VERSAO = 'inspecao-v1.2.0';
+const VERSAO = 'inspecao-v1.2.1';
 const ARQUIVOS = [
   './',
   'index.html',

@@ -1,17 +1,17 @@
 :root {
-  --ink: #15171A;
-  --ground: #F2F1EC;
+  --ink: #17191C;
+  --ground: #F5F3EE;
   --branco: #FFFFFF;
   --muted: #4A4F57;
   --line: #D3D1C8;
   --line2: #C9C6BC;
   --soft: #E3E1D9;
-  --amarelo: #FFC20E;
-  --amarelo-suave: #FFF6D6;
-  --dark: #0E1013;
-  --dark2: #1F242B;
-  --dark3: #1B2027;
-  --muted-dark: #B8BDC4;
+  --amarelo: #B8F34A;
+  --amarelo-suave: #EEF9D9;
+  --dark: #17191C;
+  --dark2: #23262B;
+  --dark3: #1E2125;
+  --muted-dark: #9A9FA7;
   --laranja: #C2410C;
   --laranja-vivo: #FF8A3D;
   --verde: #3DDC84;
@@ -301,3 +301,8 @@ input:focus-visible, textarea:focus-visible, button:focus-visible { outline: 3px
 .item-video .acoes button { flex: 1; min-height: 44px; border-radius: 10px; font-size: 15px; font-weight: 700; border: 2px solid var(--ink); background: #fff; }
 .item-video .acoes button.perigo { border-color: var(--line2); color: var(--laranja); }
 @media (prefers-reduced-motion: reduce) { .rec-ponto { animation: none; } }
+
+/* ---------- crédito ---------- */
+.credito { margin: 4px 0 0; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 12px; letter-spacing: .03em; color: var(--muted); }
+.credito b { font-weight: 700; letter-spacing: .08em; color: var(--ink); }
+.credito .sami-simbolo { width: 15px; height: 15px; color: var(--ink); }

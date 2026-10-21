@@ -9,7 +9,7 @@ import {
 
 const CFG = window.APP_CONFIG || {};
 const $ = (id) => document.getElementById(id);
-const AMARELO = '#FFC20E';
+const AMARELO = '#B8F34A'; // verde-lima (destaque da estaca na legenda)
 const LARANJA = '#FF8A3D';
 
 const LISTAS_PADRAO = {
