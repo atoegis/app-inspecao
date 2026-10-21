@@ -9,7 +9,8 @@
 <title>Inspeção de Obra</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<meta name="apple-mobile-web-app-title" content="Inspeção">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
@@ -25,7 +26,7 @@
     <div class="marca"><span class="quadrado"></span><span>Inspeção de obra</span></div>
     <p>Registro fotográfico com estaca e coordenadas</p>
   </header>
-  <form class="corpo" id="form-codigo">
+  <form class="corpo rolavel" id="form-codigo">
     <div class="campo">
       <label for="in-codigo">Código da equipe</label>
       <input id="in-codigo" type="text" inputmode="numeric" autocomplete="off" placeholder="Informado pelo responsável" required>
@@ -43,7 +44,12 @@
     <div class="marca"><span class="quadrado"></span><span>Inspeção de obra</span></div>
     <p>Registro fotográfico com estaca e coordenadas</p>
   </header>
-  <form class="corpo" id="form-inicio">
+  <form class="corpo rolavel" id="form-inicio">
+    <button type="button" class="cartao-instalar" id="btn-instalar" hidden>
+      <span class="icone-app"><img src="icons/icon-192.png" alt=""></span>
+      <span class="txt"><strong>Instalar na tela do celular</strong><small>Abre como app, com ícone próprio e sem a barra do navegador</small></span>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><polyline points="7 10 12 15 17 10"/><path d="M5 21h14"/></svg>
+    </button>
     <div class="campo">
       <label for="in-nome">Nome de quem está registrando</label>
       <input id="in-nome" type="text" autocomplete="name" placeholder="Digite seu nome" required>
@@ -73,7 +79,11 @@
     </div>
     <div class="cresce"></div>
     <button class="btn primario" type="submit" id="btn-iniciar">Iniciar relatório <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></button>
-    <button class="btn link" type="button" id="btn-ver-registros">Ver registros salvos</button>
+    <button class="btn secundario" type="button" id="btn-ver-relatorios">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
+      Relatórios e envios
+      <span class="contador-inline" id="inicio-pend" hidden></span>
+    </button>
   </form>
 </section>
 
@@ -114,8 +124,13 @@
       <p id="visor-msg">Câmera indisponível.</p>
       <button class="btn primario" type="button" id="btn-camera-nativa">Abrir câmera do celular</button>
     </div>
-    <span class="selo">Prévia da legenda</span>
+    <span class="selo" id="selo-previa">Prévia da legenda</span>
+    <div class="rec" id="rec" role="status" hidden><span class="rec-ponto"></span><span id="rec-tempo">00:00</span><span id="rec-tam"></span></div>
     <div class="legenda-previa" id="legenda-previa"></div>
+  </div>
+  <div class="modo-cam" role="group" aria-label="Foto ou vídeo">
+    <button type="button" data-modo-cam="foto" aria-pressed="true">Foto</button>
+    <button type="button" data-modo-cam="video" aria-pressed="false">Vídeo</button>
   </div>
   <input type="file" id="in-foto" accept="image/*" capture="environment" hidden>
   <div class="cam-base">
@@ -168,6 +183,39 @@
   </div>
 </section>
 
+<!-- ============ VÍDEO GRAVADO ============ -->
+<section class="tela claro" id="tela-video" hidden>
+  <header class="barra">
+    <button type="button" class="barra-btn" id="btn-video-descartar">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>Descartar
+    </button>
+    <h1>Vídeo gravado</h1>
+    <span class="barra-espaco"></span>
+  </header>
+  <div class="corpo rolavel">
+    <div class="video-previa"><video id="rv-video" controls playsinline preload="metadata"></video></div>
+    <div class="cartao-estaca" id="rv-cartao">
+      <span class="icone-amarelo"><svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg></span>
+      <div><strong id="rv-titulo"></strong><small id="rv-info"></small></div>
+    </div>
+    <div class="campo">
+      <label for="rv-desc">Descrição</label>
+      <textarea id="rv-desc" rows="2" placeholder="Ex.: percurso pela drenagem do Corte 18, lado direito"></textarea>
+    </div>
+    <div class="campo">
+      <span class="rotulo">Categoria</span>
+      <div class="chips" id="rv-cats"></div>
+    </div>
+    <p class="nota-icone">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      <span>O vídeo <b>não</b> é enviado ao Drive. Ele fica no celular com um arquivo de legenda (.srt) do mesmo nome. Para publicar, carregue os dois no portal.</span>
+    </p>
+    <button class="btn primario" type="button" id="btn-video-salvar">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><polyline points="7 10 12 15 17 10"/><path d="M5 21h14"/></svg>Salvar no celular
+    </button>
+  </div>
+</section>
+
 <!-- ============ CONFIGURAÇÕES ============ -->
 <section class="tela claro" id="tela-config" hidden>
   <header class="barra">
@@ -215,6 +263,21 @@
       </div>
     </div>
     <div class="campo">
+      <span class="rotulo secao">Vídeo</span>
+      <div class="linhas-seg" id="linhas-video"></div>
+      <div class="lista-switch">
+        <div class="linha-switch">
+          <div><strong>Gravar som</strong><small>Usa o microfone do celular</small></div>
+          <button type="button" role="switch" class="switch" id="sw-som" aria-checked="true" aria-label="Gravar som"><span></span></button>
+        </div>
+        <div class="linha-switch">
+          <div><strong>Legenda também na imagem</strong><small>Além do arquivo .srt. Gasta mais bateria e pode travar em celulares simples</small></div>
+          <button type="button" role="switch" class="switch" id="sw-queimar" aria-checked="false" aria-label="Legenda também na imagem do vídeo"><span></span></button>
+        </div>
+      </div>
+      <p class="ajuda" id="video-estimativa"></p>
+    </div>
+    <div class="campo">
       <span class="rotulo secao">Base e conexão</span>
       <div class="info-base">
         <p id="info-base"></p>
@@ -223,6 +286,41 @@
         <button type="button" class="btn link" id="btn-trocar-codigo">Trocar código da equipe</button>
       </div>
     </div>
+  </div>
+</section>
+
+<!-- ============ RELATÓRIOS E ENVIOS ============ -->
+<section class="tela claro" id="tela-relatorios" hidden>
+  <header class="barra">
+    <button type="button" class="barra-btn so-icone" id="btn-rels-voltar" aria-label="Voltar">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+    <h1>Relatórios e envios</h1>
+    <span class="barra-espaco curto"></span>
+  </header>
+  <div class="corpo rolavel">
+    <div class="resumo-envio" id="resumo-envio">
+      <div class="resumo-num"><strong id="res-total">0</strong><span>fotos neste celular</span></div>
+      <div class="resumo-num ok"><strong id="res-enviadas">0</strong><span>enviadas ao Drive</span></div>
+      <div class="resumo-num pend"><strong id="res-pend">0</strong><span>aguardando envio</span></div>
+    </div>
+    <div class="aviso-envio" id="rels-aviso" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.5 19H7a5 5 0 1 1 1.6-9.7A6 6 0 0 1 20 11a4 4 0 0 1-2.5 8z"/></svg>
+      <div><strong id="rels-aviso-titulo"></strong><small id="rels-aviso-sub"></small></div>
+      <button type="button" class="btn-amarelo-peq" id="btn-rels-enviar">Enviar</button>
+    </div>
+    <div class="chips" id="chips-rels"></div>
+    <div class="lista-rels" id="lista-rels"></div>
+    <div class="secao-videos" id="secao-videos" hidden>
+      <div class="secao-tit"><strong>Vídeos no celular</strong><span id="videos-total"></span></div>
+      <p class="nota">Os vídeos não vão para o Drive sozinhos. Carregue o vídeo e a legenda no portal e depois apague daqui para liberar espaço.</p>
+      <div class="lista-videos" id="lista-videos"></div>
+    </div>
+    <a class="btn secundario" id="link-portal" href="https://atoegis.github.io/portal-inspecao/" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>
+      Abrir portal com mapa
+    </a>
+    <p class="nota">Mostra o que foi registrado neste celular. Todas as fotos da equipe estão no portal.</p>
   </div>
 </section>
 
@@ -281,6 +379,28 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>Encerrar relatório
     </button>
     <button class="btn secundario" type="button" id="btn-cancelar-encerrar">Continuar fotografando</button>
+  </div>
+</div>
+
+<!-- ============ DIÁLOGO: SALVAR VÍDEO (iPhone) ============ -->
+<div class="sobreposicao" id="dlg-salvar-video" hidden>
+  <div class="dialogo" role="dialog" aria-modal="true" aria-labelledby="sv-titulo">
+    <h2 id="sv-titulo">Salvar no iPhone</h2>
+    <p class="suave">Salve os dois arquivos. Toque em cada botão e escolha <b>Salvar Vídeo</b> e <b>Salvar em Arquivos</b>.</p>
+    <button class="btn primario" type="button" id="btn-sv-video">1. Salvar vídeo</button>
+    <button class="btn secundario" type="button" id="btn-sv-legenda">2. Salvar legenda (.srt)</button>
+    <button class="btn link" type="button" id="btn-sv-fechar">Fechar</button>
+  </div>
+</div>
+
+<!-- ============ DIÁLOGO: INSTALAR ============ -->
+<div class="sobreposicao" id="dlg-instalar" hidden>
+  <div class="dialogo" role="dialog" aria-modal="true" aria-labelledby="inst-titulo">
+    <span class="icone-app grande"><img src="icons/icon-192.png" alt=""></span>
+    <h2 id="inst-titulo">Instalar na tela do celular</h2>
+    <ol class="passos" id="inst-passos"></ol>
+    <p class="nota" id="inst-nota"></p>
+    <button class="btn primario" type="button" id="btn-inst-ok">Entendi</button>
   </div>
 </div>
 

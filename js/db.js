@@ -1,7 +1,7 @@
 // Armazenamento local (IndexedDB): registros com imagens, relatórios, cache da base e ajustes.
 
 const NOME = 'inspecao-obra';
-const VERSAO = 1;
+const VERSAO = 2;
 let dbPromise = null;
 
 function abrir() {
@@ -17,6 +17,12 @@ function abrir() {
       }
       if (!db.objectStoreNames.contains('relatorios')) db.createObjectStore('relatorios', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv');
+      // versão 2: vídeos (metadados) e as partes gravadas de cada vídeo
+      if (!db.objectStoreNames.contains('videos')) db.createObjectStore('videos', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('videoPartes')) {
+        const p = db.createObjectStore('videoPartes', { keyPath: ['videoId', 'seq'] });
+        p.createIndex('video', 'videoId');
+      }
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -49,6 +55,25 @@ export const db = {
   kvGet: (chave) => tx('kv', 'readonly', (s) => req2p(s.get(chave))),
   kvSet: (chave, valor) => tx('kv', 'readwrite', (s) => req2p(s.put(valor, chave))),
 };
+
+// partes de um vídeo, em ordem
+export function partesDoVideo(videoId) {
+  return tx('videoPartes', 'readonly', (s) => req2p(s.index('video').getAll(IDBKeyRange.only(videoId))))
+    .then((ps) => ps.sort((a, b) => a.seq - b.seq));
+}
+
+export function apagarPartesDoVideo(videoId) {
+  return tx('videoPartes', 'readwrite', (s) => new Promise((resolve, reject) => {
+    const r = s.index('video').openKeyCursor(IDBKeyRange.only(videoId));
+    r.onsuccess = () => {
+      const c = r.result;
+      if (!c) { resolve(); return; }
+      s.delete(c.primaryKey);
+      c.continue();
+    };
+    r.onerror = () => reject(r.error);
+  }));
+}
 
 export async function pedirPersistencia() {
   try {

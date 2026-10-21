@@ -21,28 +21,16 @@ function quebrar(ctx, texto, larguraMax) {
 }
 
 /**
- * Desenha a imagem de origem num canvas e, se `linhas` vier preenchido, carimba a legenda.
- * linhas: [{ texto, cor?, negrito? }]
- * opcoes: { posicao: 'inf'|'sup', tamanho: 'P'|'M'|'G', maxLado?: number }
+ * Desenha a legenda (linhas) num contexto já pintado com a imagem.
+ * linhas: [{ texto, cor?, negrito? }] · opcoes: { posicao: 'inf'|'sup', tamanho: 'P'|'M'|'G' }
  */
-export function renderizar(origem, larguraOrigem, alturaOrigem, linhas, opcoes = {}) {
-  const maxLado = opcoes.maxLado || 2560;
-  const escala = Math.min(1, maxLado / Math.max(larguraOrigem, alturaOrigem));
-  const w = Math.round(larguraOrigem * escala);
-  const h = Math.round(alturaOrigem * escala);
-  const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(origem, 0, 0, w, h);
-  if (!linhas || !linhas.length) return canvas;
-
+export function desenharLegenda(ctx, w, h, linhas, opcoes = {}) {
+  if (!linhas || !linhas.length) return;
   const fs = Math.max(14, Math.round(Math.min(w, h) * (FATOR[opcoes.tamanho] || FATOR.M)));
   const margem = Math.round(Math.min(w, h) * 0.035);
   const entre = Math.round(fs * 1.32);
   const larguraMax = w * 0.86 - margem;
 
-  // monta as linhas já quebradas
   const finais = [];
   for (const l of linhas) {
     if (!l || !l.texto) continue;
@@ -53,6 +41,7 @@ export function renderizar(origem, larguraOrigem, alturaOrigem, linhas, opcoes =
   const alturaBloco = finais.length * entre;
   let y = opcoes.posicao === 'sup' ? margem + fs : h - margem - alturaBloco + fs;
   const x = w - margem;
+  ctx.save();
   ctx.textAlign = 'right';
   ctx.textBaseline = 'alphabetic';
   ctx.lineJoin = 'round';
@@ -68,6 +57,24 @@ export function renderizar(origem, larguraOrigem, alturaOrigem, linhas, opcoes =
     ctx.fillText(l.texto, x, y);
     y += entre;
   }
+  ctx.restore();
+}
+
+/**
+ * Desenha a imagem de origem num canvas e, se `linhas` vier preenchido, carimba a legenda.
+ * opcoes: { posicao: 'inf'|'sup', tamanho: 'P'|'M'|'G', maxLado?: number }
+ */
+export function renderizar(origem, larguraOrigem, alturaOrigem, linhas, opcoes = {}) {
+  const maxLado = opcoes.maxLado || 2560;
+  const escala = Math.min(1, maxLado / Math.max(larguraOrigem, alturaOrigem));
+  const w = Math.round(larguraOrigem * escala);
+  const h = Math.round(alturaOrigem * escala);
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(origem, 0, 0, w, h);
+  desenharLegenda(ctx, w, h, linhas, opcoes);
   return canvas;
 }
 

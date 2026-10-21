@@ -2,6 +2,10 @@ import { BaseEstacas, fmtCoord, fmtDist } from './geo.js';
 import { db, pedirPersistencia } from './db.js';
 import { renderizar, canvasParaBlob, carregarFonteCarimbo } from './stamp.js';
 import { configurarApi, chamar, processarFila, aoMudarFila, apiConfigurada, estaEnviando } from './sync.js';
+import {
+  RESOLUCOES, Gravador, gravacaoSuportada, gerarSRT, arquivoDoVideo, apagarVideo, recuperarInterrompidos,
+  fmtDuracao, fmtTamanho, tipoBase,
+} from './video.js';
 
 const CFG = window.APP_CONFIG || {};
 const $ = (id) => document.getElementById(id);
@@ -15,7 +19,9 @@ const LISTAS_PADRAO = {
 const AJUSTES_PADRAO = {
   opc: { desc: true, seg: false, cid: false, pac: false, infra: false, super: false, oae: false },
   coord: 'dec', pos: 'inf', tam: 'M',
-  galeria: false, galCom: true, galSem: false,
+  galeria: true, galCom: true, galSem: false,
+  vidRes: '720', vidSom: true, vidQueimar: false,
+  v: 2,
 };
 const OPCIONAIS = [
   ['desc', 'Descrição', 'Texto digitado no registro'],
@@ -48,6 +54,9 @@ const estado = {
   ultimaDesc: '',
   filtro: 'hoje',
   telaAnterior: 'tela-inicio',
+  modoCam: 'foto',
+  gravador: null,
+  rvCats: new Set(),
   wakeLock: null,
   gpsWatch: null,
   relogio: null,
@@ -89,7 +98,7 @@ function el(tag, attrs = {}, ...filhos) {
 }
 
 // ------------------------------------------------------------------ telas
-const TELAS = ['tela-codigo', 'tela-inicio', 'tela-camera', 'tela-revisar', 'tela-config', 'tela-registros'];
+const TELAS = ['tela-codigo', 'tela-inicio', 'tela-camera', 'tela-revisar', 'tela-config', 'tela-registros', 'tela-relatorios', 'tela-video'];
 let telaAtual = null;
 function mostrar(id) {
   if (telaAtual && telaAtual !== id && ['tela-config', 'tela-registros'].includes(id)) estado.telaAnterior = telaAtual;
@@ -100,6 +109,10 @@ function mostrar(id) {
   else if (saiuCamera) sairCamera();
   if (id === 'tela-registros') renderRegistros();
   if (id === 'tela-config') renderConfig();
+  if (id === 'tela-relatorios') renderRelatorios();
+  if (id === 'tela-inicio') { atualizarPendInicio(); renderInstalar(); }
+  const corpo = $(id).querySelector('.rolavel');
+  if (corpo) corpo.scrollTop = 0;
 }
 
 // ------------------------------------------------------------------ base de estacas
@@ -202,11 +215,12 @@ function atualizarPosicao() {
 }
 
 // ------------------------------------------------------------------ legenda
-function linhasLegenda(dados, extras, desc) {
+function linhasLegenda(dados, extras, desc, formatoCoord) {
   const L = [];
   L.push({ texto: fmtData(dados.data) });
   if (dados.pos) {
-    L.push({ texto: `${fmtCoord(dados.pos.lat, dados.pos.lon, estado.ajustes.coord)}  ±${Math.round(dados.pos.acc)} m` });
+    L.push({ texto: `${fmtCoord(dados.pos.lat, dados.pos.lon, formatoCoord || estado.ajustes.coord)}  ±${Math.round(dados.pos.acc)} m` });
+    if (formatoCoord === 'dec' && estado.ajustes.coord === 'utm') L.push({ texto: fmtCoord(dados.pos.lat, dados.pos.lon, 'utm') });
   } else {
     L.push({ texto: 'Sem posição de GPS', cor: LARANJA });
   }
@@ -289,6 +303,7 @@ function renderModo() {
 document.querySelectorAll('.cartao-modo').forEach((b) => b.addEventListener('click', () => { estado.modo = b.dataset.modo; renderModo(); }));
 
 function irParaInicio() {
+  if (estado.atualizacaoPendente) { location.reload(); return; }
   $('in-nome').value = estado.nome || '';
   renderTipos();
   renderModo();
@@ -327,7 +342,14 @@ $('form-inicio').addEventListener('submit', async (ev) => {
   $('in-objeto').value = '';
   mostrar('tela-camera');
 });
-$('btn-ver-registros').addEventListener('click', () => mostrar('tela-registros'));
+$('btn-ver-relatorios').addEventListener('click', () => mostrar('tela-relatorios'));
+
+async function atualizarPendInicio() {
+  const n = (await db.all('registros')).filter((r) => r.statusEnvio !== 'Enviado').length;
+  $('inicio-pend').textContent = String(n);
+  $('inicio-pend').hidden = !n;
+  $('inicio-pend').setAttribute('aria-label', `${n} foto(s) aguardando envio`);
+}
 
 // ------------------------------------------------------------------ relatório em aberto
 async function verificarRelatorioAberto() {
@@ -390,6 +412,7 @@ async function entrarCamera() {
     $('cam-sub').textContent = estado.nome;
     $('btn-encerrar-txt').textContent = 'Sair';
   }
+  marcarModoCam();
   atualizarMiniatura();
   iniciarGPS();
   atualizarPosicao();
@@ -401,27 +424,44 @@ async function entrarCamera() {
 }
 
 function sairCamera() {
+  if (estado.gravador && estado.gravador.ativo) estado.gravador.parar().catch(() => {});
   clearInterval(estado.relogio);
   pararVideo();
   try { if (estado.wakeLock) estado.wakeLock.release(); } catch (e) { /* ok */ }
   estado.wakeLock = null;
 }
 
+function chaveStream() {
+  return estado.modoCam === 'video' ? `video-${estado.ajustes.vidRes}-${estado.ajustes.vidSom ? 'som' : 'mudo'}` : 'foto';
+}
+
 async function iniciarVideo() {
   const video = $('video');
-  if (estado.stream && estado.stream.getVideoTracks().some((t) => t.readyState === 'live')) return;
+  if (estado.stream && estado.streamChave === chaveStream() && estado.stream.getVideoTracks().some((t) => t.readyState === 'live')) return;
+  if (estado.stream) pararVideo();
   $('visor-vazio').hidden = true;
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     mostrarSemCamera('Este navegador não abre a câmera dentro do app.');
     return;
   }
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } },
-      audio: false,
-    });
+    const modoVideo = estado.modoCam === 'video';
+    const R = RESOLUCOES[estado.ajustes.vidRes] || RESOLUCOES[720];
+    const pedido = modoVideo
+      ? { video: { facingMode: { ideal: 'environment' }, width: { ideal: R.w }, height: { ideal: R.h }, frameRate: { ideal: 30 } }, audio: !!estado.ajustes.vidSom }
+      : { video: { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } }, audio: false };
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(pedido);
+    } catch (e) {
+      if (!pedido.audio) throw e;
+      // sem permissão de microfone: grava sem som
+      stream = await navigator.mediaDevices.getUserMedia({ ...pedido, audio: false });
+      toast('Microfone sem permissão: o vídeo será gravado sem som.', 4000);
+    }
     if (telaAtual !== 'tela-camera') { stream.getTracks().forEach((t) => t.stop()); return; }
     estado.stream = stream;
+    estado.streamChave = chaveStream();
     video.srcObject = stream;
     await video.play().catch(() => {});
     const track = stream.getVideoTracks()[0];
@@ -446,6 +486,7 @@ function mostrarSemCamera(msg) {
 function pararVideo() {
   if (estado.stream) estado.stream.getTracks().forEach((t) => t.stop());
   estado.stream = null;
+  estado.streamChave = null;
   $('video').srcObject = null;
 }
 
@@ -468,6 +509,7 @@ function exigirGPS() {
 }
 
 $('btn-foto').addEventListener('click', () => {
+  if (estado.modoCam === 'video') { alternarGravacao(); return; }
   if (!exigirGPS()) return;
   const video = $('video');
   if (!estado.stream || !video.videoWidth) { $('in-foto').click(); return; }
@@ -521,7 +563,11 @@ $('btn-confirmar-encerrar').addEventListener('click', async () => {
 });
 $('btn-config').addEventListener('click', () => mostrar('tela-config'));
 $('btn-config2').addEventListener('click', () => mostrar('tela-config'));
-$('btn-registros').addEventListener('click', () => mostrar('tela-registros'));
+$('btn-registros').addEventListener('click', () => {
+  estado.relSel = null;
+  estado.filtro = estado.relatorio ? 'rel' : 'hoje';
+  mostrar('tela-registros');
+});
 
 async function atualizarMiniatura() {
   const regs = await db.all('registros');
@@ -541,6 +587,269 @@ async function atualizarMiniatura() {
   }
   $('mini-cont').textContent = String(doContexto.length);
   $('mini-cont').hidden = !doContexto.length;
+}
+
+// ------------------------------------------------------------------ vídeo
+function marcarModoCam() {
+  const v = estado.modoCam === 'video';
+  document.querySelectorAll('[data-modo-cam]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.modoCam === estado.modoCam)));
+  const ob = $('btn-foto');
+  ob.classList.toggle('video', v);
+  ob.setAttribute('aria-label', v ? 'Iniciar gravação' : 'Tirar foto');
+  $('btn-camera-nativa').hidden = v;
+  $('cam-titulo').textContent = v ? 'Vídeo' : (estado.relatorio ? `Foto ${estado.nFoto || 1}` : 'Individuais');
+}
+
+document.querySelectorAll('[data-modo-cam]').forEach((b) => b.addEventListener('click', async () => {
+  const modo = b.dataset.modoCam;
+  if (modo === estado.modoCam || (estado.gravador && estado.gravador.ativo)) return;
+  if (modo === 'video' && !gravacaoSuportada()) {
+    toast('Este navegador não grava vídeo. Atualize o Chrome (Android) ou o iOS.', 4500);
+    return;
+  }
+  estado.modoCam = modo;
+  marcarModoCam();
+  await iniciarVideo();
+}));
+
+function amostraAgora() {
+  return {
+    ts: Date.now(),
+    pos: estado.pos ? { lat: estado.pos.lat, lon: estado.pos.lon, acc: estado.pos.acc } : null,
+    estaca: estado.estaca ? { ...estado.estaca } : null,
+  };
+}
+
+let recTimer = null;
+function mostrarRec(g) {
+  $('rec').hidden = !g;
+  $('selo-previa').hidden = !!g;
+  if (!g) return;
+  $('rec-tempo').textContent = fmtDuracao(g.segundos());
+  $('rec-tam').textContent = fmtTamanho(g.tamanho);
+}
+
+async function alternarGravacao() {
+  const g = estado.gravador;
+  if (g && g.ativo) { await pararGravacao(); return; }
+  const video = $('video');
+  if (!estado.stream || !video.videoWidth) { toast('A câmera ainda não está pronta.'); return; }
+  if (!estado.pos) toast('GPS ainda sem sinal: a legenda mostrará "Sem posição" até o sinal chegar.', 4000);
+  try {
+    const est = navigator.storage && navigator.storage.estimate ? await navigator.storage.estimate() : null;
+    if (est && est.quota && est.quota - est.usage < 300 * 1048576) {
+      toast('Pouco espaço livre no celular. Apague vídeos antigos em Relatórios e envios.', 5000);
+    }
+  } catch (e) { /* opcional */ }
+  const agora = new Date();
+  const e0 = estado.estaca;
+  const rel = estado.relatorio;
+  const reg = {
+    id: `V-${carimboId(agora)}-${aleatorio()}`,
+    base: `VID_${carimboId(agora).replace('-', '_')}_EST-${(e0 ? e0.estaca : 'sem-estaca').replace(/[+,]/g, '-')}`,
+    criadoEm: agora.getTime(),
+    inicioTs: agora.getTime(),
+    inspetor: estado.nome,
+    idRelatorio: rel ? rel.id : '',
+    relRotulo: rel ? [rel.tipo, rel.objeto].filter(Boolean).join(' · ') : '',
+    resolucao: (RESOLUCOES[estado.ajustes.vidRes] || RESOLUCOES[720]).rotulo,
+    som: estado.stream.getAudioTracks().length > 0,
+    descricao: '',
+    categoria: '',
+    amostras: [],
+  };
+  const gr = new Gravador({
+    stream: estado.stream,
+    video,
+    resolucao: estado.ajustes.vidRes,
+    queimar: estado.ajustes.vidQueimar,
+    registro: reg,
+    amostraAgora,
+    linhasAgora: () => linhasLegenda({ data: new Date(), pos: estado.pos, estaca: estado.estaca }, estado.ajustes.opc, ''),
+    opcoesLegenda: () => ({ posicao: estado.ajustes.pos, tamanho: estado.ajustes.tam }),
+    aoProgresso: (x) => mostrarRec(x),
+  });
+  try {
+    await gr.iniciar();
+  } catch (err) {
+    console.error(err);
+    toast(`Não foi possível gravar: ${err.message || err}`, 5000);
+    return;
+  }
+  estado.gravador = gr;
+  $('tela-camera').classList.add('gravando');
+  $('btn-foto').classList.add('gravando');
+  $('btn-foto').setAttribute('aria-label', 'Parar gravação');
+  mostrarRec(gr);
+  clearInterval(recTimer);
+  recTimer = setInterval(() => mostrarRec(gr), 500);
+}
+
+async function pararGravacao() {
+  const g = estado.gravador;
+  if (!g) return;
+  carregando('Finalizando o vídeo…');
+  clearInterval(recTimer);
+  try {
+    const reg = await g.parar();
+    estado.gravador = null;
+    $('tela-camera').classList.remove('gravando');
+    $('btn-foto').classList.remove('gravando');
+    mostrarRec(null);
+    marcarModoCam();
+    carregando(null);
+    await abrirRevisaoVideo(reg);
+  } catch (err) {
+    console.error(err);
+    estado.gravador = null;
+    $('tela-camera').classList.remove('gravando');
+    $('btn-foto').classList.remove('gravando');
+    mostrarRec(null);
+    carregando(null);
+    toast('Falha ao finalizar o vídeo. O que foi gravado ficou em Relatórios e envios.', 5000);
+  }
+}
+
+// trecho percorrido, distância fora da faixa etc. a partir das amostras
+function resumoVideo(v) {
+  const am = (v.amostras || []).filter((a) => a.estaca);
+  const ms = am.map((a) => Number(a.estaca.estacaM));
+  let trecho = '';
+  if (ms.length) {
+    const a0 = am[ms.indexOf(Math.min(...ms))].estaca;
+    const a1 = am[ms.indexOf(Math.max(...ms))].estaca;
+    trecho = a0.estaca === a1.estaca ? `EST ${a0.estaca}` : `EST ${a0.estaca} a ${a1.estaca}`;
+    if (a0.eixo && a0.eixo !== 'Linha principal') trecho += ` (${a0.eixo})`;
+  }
+  const fora = am.filter((a) => a.estaca.distancia > estado.limite).length;
+  return { trecho, fora, semGps: (v.amostras || []).filter((a) => !a.pos).length };
+}
+
+function srtDoVideo(v) {
+  const extras = estado.ajustes.opc;
+  const cab = [
+    v.inspetor && `Inspetor: ${v.inspetor}`,
+    v.idRelatorio && `Relatório: ${v.idRelatorio}${v.relRotulo ? ` · ${v.relRotulo}` : ''}`,
+    v.categoria && `Categoria: ${v.categoria}`,
+    v.descricao && `Descrição: ${v.descricao}`,
+  ];
+  return gerarSRT(v.amostras || [], (a) => linhasLegenda({ data: new Date(a.ts), pos: a.pos, estaca: a.estaca }, extras, '', 'dec').map((l) => l.texto), cab, v.duracao);
+}
+
+let videoUrl = null;
+let videoRev = null;
+async function abrirRevisaoVideo(v) {
+  videoRev = v;
+  const blob = await arquivoDoVideo(v);
+  if (videoUrl) URL.revokeObjectURL(videoUrl);
+  videoUrl = URL.createObjectURL(blob);
+  $('rv-video').src = videoUrl;
+  const r = resumoVideo(v);
+  $('rv-titulo').textContent = `${fmtDuracao(v.duracao)} · ${fmtTamanho(v.tamanho)} · ${v.resolucao}`;
+  $('rv-info').textContent = [r.trecho || 'Sem estaca', r.fora ? `${r.fora} s fora da faixa` : '', v.som ? 'com som' : 'sem som', v.queimada ? 'legenda na imagem' : ''].filter(Boolean).join(' · ');
+  $('rv-desc').value = v.descricao || '';
+  estado.rvCats = new Set((v.categoria || '').split('; ').filter(Boolean));
+  renderRvCats();
+  mostrar('tela-video');
+}
+
+function renderRvCats() {
+  $('rv-cats').replaceChildren(...estado.listas.categorias.map((c) => el('button', {
+    type: 'button', class: 'chip', 'aria-pressed': String(estado.rvCats.has(c)),
+    onclick: () => { estado.rvCats.has(c) ? estado.rvCats.delete(c) : estado.rvCats.add(c); renderRvCats(); },
+  }, c)));
+}
+
+function fecharRevisaoVideo() {
+  $('rv-video').pause();
+  $('rv-video').removeAttribute('src');
+  $('rv-video').load();
+  if (videoUrl) { URL.revokeObjectURL(videoUrl); videoUrl = null; }
+  videoRev = null;
+  mostrar('tela-camera');
+}
+
+$('btn-video-salvar').addEventListener('click', async () => {
+  const v = videoRev;
+  if (!v) return;
+  v.descricao = $('rv-desc').value.trim();
+  v.categoria = [...estado.rvCats].join('; ');
+  v.status = 'salvo';
+  v.salvoEm = Date.now();
+  await db.put('videos', v);
+  await salvarArquivosVideo(v);
+  fecharRevisaoVideo();
+});
+$('btn-video-descartar').addEventListener('click', async () => {
+  const v = videoRev;
+  if (!v) return;
+  if (!confirm('Descartar este vídeo? Ele será apagado do celular.')) return;
+  await apagarVideo(v.id);
+  toast('Vídeo descartado');
+  fecharRevisaoVideo();
+});
+
+// Salva o vídeo e a legenda nos arquivos do celular (Downloads no Android; Fotos/Arquivos no iPhone).
+async function salvarArquivosVideo(v) {
+  const video = new File([await arquivoDoVideo(v)], `${v.base}.${v.ext || 'webm'}`, { type: tipoBase(v.mime) });
+  const legenda = new File([`﻿${srtDoVideo(v)}`], `${v.base}.srt`, { type: 'application/x-subrip' });
+  if (eIOS() && navigator.canShare && navigator.canShare({ files: [video] })) {
+    $('dlg-salvar-video').hidden = false;
+    $('btn-sv-video').onclick = async () => { try { await navigator.share({ files: [video] }); } catch (e) { /* cancelado */ } };
+    $('btn-sv-legenda').onclick = async () => {
+      try {
+        await navigator.share({ files: [legenda] });
+      } catch (e) {
+        baixarArquivo(legenda);
+      }
+    };
+    $('btn-sv-fechar').onclick = () => { $('dlg-salvar-video').hidden = true; };
+    return;
+  }
+  baixarArquivo(video);
+  setTimeout(() => baixarArquivo(legenda), 700);
+  toast('Vídeo e legenda salvos na pasta Downloads do celular.', 4500);
+}
+
+function baixarArquivo(f) {
+  const url = URL.createObjectURL(f);
+  const a = el('a', { href: url, download: f.name });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+// lista de vídeos guardados no celular (tela Relatórios e envios)
+const urlsVideos = [];
+async function renderVideosCelular() {
+  urlsVideos.splice(0).forEach((u) => URL.revokeObjectURL(u));
+  const vids = (await db.all('videos')).filter((v) => v.status !== 'gravando').sort((a, b) => b.criadoEm - a.criadoEm);
+  $('secao-videos').hidden = !vids.length;
+  if (!vids.length) return;
+  const total = vids.reduce((s, v) => s + (v.tamanho || 0), 0);
+  $('videos-total').textContent = `${vids.length} · ${fmtTamanho(total)}`;
+  $('lista-videos').replaceChildren(...vids.map((v) => {
+    let img;
+    if (v.thumb) { const u = URL.createObjectURL(v.thumb); urlsVideos.push(u); img = el('img', { src: u, alt: '' }); } else img = el('span', { class: 'sem-img' });
+    const r = resumoVideo(v);
+    const d = new Date(v.criadoEm);
+    const estadoTxt = v.status === 'interrompido' ? 'Gravação interrompida (recuperada)' : v.status === 'gravado' ? 'Ainda não salvo nos arquivos' : 'Salvo nos arquivos do celular';
+    return el('div', { class: 'item-video' },
+      el('div', { class: 'l' }, img, el('div', { class: 'info' },
+        el('strong', {}, `${fmtData(d).slice(0, 16)} · ${fmtDuracao(v.duracao)}`),
+        el('span', {}, [r.trecho || 'Sem estaca', fmtTamanho(v.tamanho), v.resolucao].join(' · ')),
+        el('span', {}, [v.relRotulo || 'Vídeo avulso', v.descricao].filter(Boolean).join(' · ')),
+        el('span', { class: `etq ${v.status === 'salvo' ? 'ok' : 'pend'}`, style: 'align-self:flex-start;margin-top:3px' }, estadoTxt))),
+      el('div', { class: 'acoes' },
+        el('button', { type: 'button', onclick: () => salvarArquivosVideo(v).then(async () => { if (v.status !== 'salvo') { v.status = 'salvo'; v.salvoEm = Date.now(); await db.put('videos', v); renderVideosCelular(); } }) }, v.status === 'salvo' ? 'Salvar de novo' : 'Salvar arquivos'),
+        el('button', { type: 'button', class: 'perigo', onclick: async () => {
+          if (!confirm(`Apagar este vídeo do app (${fmtTamanho(v.tamanho)})? Os arquivos já salvos no celular não são apagados.`)) return;
+          await apagarVideo(v.id);
+          renderVideosCelular();
+          renderRelatorios();
+        } }, 'Apagar do app')));
+  }));
 }
 
 // ------------------------------------------------------------------ revisão
@@ -731,6 +1040,11 @@ function renderConfig() {
     seg('Posição', 'pos', [['inf', 'Inferior'], ['sup', 'Superior']]),
     seg('Tamanho', 'tam', [['P', 'P'], ['M', 'M'], ['G', 'G']]),
   );
+  $('linhas-video').replaceChildren(seg('Resolução', 'vidRes', [['480', '480p'], ['720', '720p'], ['1080', '1080p']]));
+  $('sw-som').setAttribute('aria-checked', String(!!a.vidSom));
+  $('sw-queimar').setAttribute('aria-checked', String(!!a.vidQueimar));
+  const R = RESOLUCOES[a.vidRes] || RESOLUCOES[720];
+  $('video-estimativa').textContent = `Em ${R.rotulo}, cada minuto de vídeo ocupa cerca de ${R.mbMin} MB no celular.`;
   $('sw-galeria').setAttribute('aria-checked', String(a.galeria));
   $('galeria-opcoes').hidden = !a.galeria;
   document.querySelectorAll('[data-gal]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.gal === 'com' ? a.galCom : a.galSem)));
@@ -750,6 +1064,8 @@ function renderConfig() {
   $('btn-trocar-codigo').hidden = !apiConfigurada();
 }
 $('sw-galeria').addEventListener('click', () => { estado.ajustes.galeria = !estado.ajustes.galeria; salvarAjustes(); });
+$('sw-som').addEventListener('click', () => { estado.ajustes.vidSom = !estado.ajustes.vidSom; salvarAjustes(); });
+$('sw-queimar').addEventListener('click', () => { estado.ajustes.vidQueimar = !estado.ajustes.vidQueimar; salvarAjustes(); });
 document.querySelectorAll('[data-gal]').forEach((b) => b.addEventListener('click', () => {
   const k = b.dataset.gal === 'com' ? 'galCom' : 'galSem';
   estado.ajustes[k] = !estado.ajustes[k];
@@ -779,7 +1095,9 @@ async function renderRegistros() {
   const regs = (await db.all('registros')).sort((a, b) => b.criadoEm - a.criadoEm);
   const pend = regs.filter((r) => r.statusEnvio !== 'Enviado');
   const deHoje = regs.filter((r) => r.criadoEm >= hoje());
-  const filtros = [['hoje', `Hoje (${deHoje.length})`], ['pend', `Pendentes (${pend.length})`]];
+  const filtros = [];
+  if (estado.relSel) filtros.push(['sel', estado.relSel === 'IND' ? 'Fotos individuais' : `Relatório ${estado.relSelNome || ''}`.trim()]);
+  filtros.push(['hoje', `Hoje (${deHoje.length})`], ['pend', `Pendentes (${pend.length})`]);
   if (estado.relatorio) filtros.push(['rel', 'Relatório atual']);
   filtros.push(['todos', `Todos (${regs.length})`]);
   if (!filtros.some(([k]) => k === estado.filtro)) estado.filtro = 'hoje';
@@ -787,7 +1105,8 @@ async function renderRegistros() {
     type: 'button', class: 'chip', 'aria-pressed': String(estado.filtro === k),
     onclick: () => { estado.filtro = k; renderRegistros(); },
   }, r)));
-  const lista = estado.filtro === 'pend' ? pend
+  const lista = estado.filtro === 'sel' ? regs.filter((r) => (estado.relSel === 'IND' ? !r.idRelatorio : r.idRelatorio === estado.relSel))
+    : estado.filtro === 'pend' ? pend
     : estado.filtro === 'rel' ? regs.filter((r) => estado.relatorio && r.idRelatorio === estado.relatorio.id)
       : estado.filtro === 'todos' ? regs : deHoje;
   const itens = lista.slice(0, 300).map((r) => {
@@ -836,12 +1155,167 @@ $('btn-nova-foto').addEventListener('click', () => (estado.sessaoAtiva ? mostrar
 
 aoMudarFila(() => {
   if (telaAtual === 'tela-registros') renderRegistros();
+  if (telaAtual === 'tela-relatorios') renderRelatorios();
+  if (telaAtual === 'tela-inicio') atualizarPendInicio();
   if (telaAtual === 'tela-camera') atualizarMiniatura();
 });
 
+// ------------------------------------------------------------------ relatórios e envios
+async function renderRelatorios() {
+  const [rels, regs, vids] = await Promise.all([db.all('relatorios'), db.all('registros'), db.all('videos')]);
+  renderVideosCelular();
+  const pend = regs.filter((r) => r.statusEnvio !== 'Enviado');
+  $('res-total').textContent = String(regs.length);
+  $('res-enviadas').textContent = String(regs.length - pend.length);
+  $('res-pend').textContent = String(pend.length);
+
+  const aviso = $('rels-aviso');
+  if (!apiConfigurada()) {
+    aviso.hidden = false;
+    $('rels-aviso-titulo').textContent = 'Servidor não configurado';
+    $('rels-aviso-sub').textContent = 'As fotos ficam salvas só neste celular.';
+    $('btn-rels-enviar').hidden = true;
+  } else if (pend.length) {
+    aviso.hidden = false;
+    $('btn-rels-enviar').hidden = false;
+    $('rels-aviso-titulo').textContent = estaEnviando() ? 'Enviando…' : navigator.onLine ? 'Envio pendente' : 'Sem conexão';
+    $('rels-aviso-sub').textContent = navigator.onLine
+      ? `${pend.length} foto(s) aguardando envio ao Drive`
+      : `${pend.length} foto(s) serão enviadas quando houver sinal`;
+    $('btn-rels-enviar').disabled = estaEnviando() || !navigator.onLine;
+  } else {
+    aviso.hidden = true;
+  }
+
+  const porRel = new Map();
+  for (const r of regs) {
+    const k = r.idRelatorio || 'IND';
+    if (!porRel.has(k)) porRel.set(k, []);
+    porRel.get(k).push(r);
+  }
+  const grupos = rels.map((rel) => ({ rel, fotos: porRel.get(rel.id) || [], ts: rel.inicioTs || 0 }));
+  if (porRel.has('IND')) {
+    const f = porRel.get('IND');
+    grupos.push({ rel: null, fotos: f, ts: Math.max(...f.map((x) => x.criadoEm)) });
+  }
+  const filtro = estado.filtroRels || 'todos';
+  const contAberto = grupos.filter((g) => g.rel && g.rel.status === 'Aberto').length;
+  const contPend = grupos.filter((g) => g.fotos.some((x) => x.statusEnvio !== 'Enviado') || (g.rel && !g.rel.sincronizado)).length;
+  const fil = [['todos', `Todos (${grupos.length})`], ['pend', `Com pendência (${contPend})`], ['aberto', `Em aberto (${contAberto})`]];
+  $('chips-rels').replaceChildren(...fil.map(([k, r]) => el('button', {
+    type: 'button', class: 'chip', 'aria-pressed': String(filtro === k),
+    onclick: () => { estado.filtroRels = k; renderRelatorios(); },
+  }, r)));
+
+  const visiveis = grupos
+    .filter((g) => filtro === 'todos'
+      || (filtro === 'aberto' && g.rel && g.rel.status === 'Aberto')
+      || (filtro === 'pend' && (g.fotos.some((x) => x.statusEnvio !== 'Enviado') || (g.rel && !g.rel.sincronizado))))
+    .sort((a, b) => b.ts - a.ts);
+
+  const cartoes = visiveis.map(({ rel, fotos }) => {
+    const env = fotos.filter((x) => x.statusEnvio === 'Enviado').length;
+    const pe = fotos.length - env;
+    const fora = fotos.filter((x) => x.situacao === 'Fora da faixa de domínio').length;
+    const ests = fotos.filter((x) => x.estacaM !== '' && x.estacaM != null).map((x) => Number(x.estacaM));
+    const trecho = ests.length ? (Math.min(...ests) === Math.max(...ests)
+      ? `EST ${fotos.find((x) => Number(x.estacaM) === Math.min(...ests)).estaca}`
+      : `EST ${fotos.find((x) => Number(x.estacaM) === Math.min(...ests)).estaca} a ${fotos.find((x) => Number(x.estacaM) === Math.max(...ests)).estaca}`) : '';
+    const pct = fotos.length ? Math.round((env / fotos.length) * 100) : 0;
+    const titulo = rel ? `${rel.tipo}${rel.objeto ? ` · ${rel.objeto}` : ''}` : 'Fotos individuais';
+    const etqStatus = rel
+      ? el('span', { class: `etq ${rel.status === 'Aberto' ? 'aberto' : 'encerrado'}` }, rel.status)
+      : el('span', { class: 'etq encerrado' }, 'Avulsas');
+    const linhaEnvio = !fotos.length
+      ? el('span', {}, 'Nenhuma foto ainda')
+      : pe
+        ? el('span', { class: 'etq pend' }, `${pe} de ${fotos.length} aguardando envio`)
+        : el('span', { class: 'etq ok' }, `✓ ${fotos.length} foto(s) no Drive`);
+    const syncRel = rel && !rel.sincronizado && apiConfigurada()
+      ? el('span', { class: 'etq pend' }, rel.status === 'Encerrado' ? 'Encerramento não enviado' : 'Relatório não enviado')
+      : null;
+    return el('button', {
+      type: 'button', class: `cartao-rel${rel && rel.status === 'Aberto' ? ' aberto' : ''}`,
+      onclick: () => {
+        estado.relSel = rel ? rel.id : 'IND';
+        estado.relSelNome = rel ? (rel.objeto || rel.tipo) : '';
+        estado.filtro = 'sel';
+        mostrar('tela-registros');
+      },
+    },
+    el('div', { class: 'topo' }, el('span', { class: 'titulo' }, titulo), etqStatus),
+    rel ? el('span', {}, `${rel.inspetor} · ${rel.inicio.slice(0, 16)}${rel.encerramento ? ` até ${rel.encerramento.slice(11, 16)}` : ''}`) : null,
+    el('span', {}, [`${fotos.length} foto(s)`, (() => { const n = vids.filter((x) => (rel ? x.idRelatorio === rel.id : !x.idRelatorio) && x.status !== 'gravando').length; return n ? `${n} vídeo(s) no celular` : ''; })(), trecho, fora ? `${fora} fora da faixa` : ''].filter(Boolean).join(' · ')),
+    fotos.length ? el('div', { class: 'barra-prog', role: 'img', 'aria-label': `${pct}% enviado` }, el('span', { style: `width:${pct}%` })) : null,
+    el('div', { class: 'rodape' }, el('div', { class: 'etiquetas' }, linhaEnvio, syncRel), fotos.length ? el('span', { class: 'ver' }, 'Ver fotos') : null));
+  });
+  $('lista-rels').replaceChildren(...(cartoes.length ? cartoes : [el('p', { class: 'vazio' }, grupos.length ? 'Nada com esse filtro.' : 'Nenhum relatório ou foto registrado neste celular ainda.')]));
+}
+$('btn-rels-enviar').addEventListener('click', async () => {
+  try {
+    const r = await processarFila();
+    toast(r.enviados ? `${r.enviados} foto(s) enviada(s)` : 'Tudo enviado');
+  } catch (e) {
+    toast(e.codigoInvalido ? 'Código da equipe inválido.' : 'Falha no envio. Tentaremos de novo automaticamente.');
+  }
+  renderRelatorios();
+});
+$('btn-rels-voltar').addEventListener('click', () => (estado.sessaoAtiva ? mostrar('tela-camera') : irParaInicio()));
+
+// ------------------------------------------------------------------ instalar na tela do celular
+let pedidoInstalacao = null;
+const instalado = () => window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+window.addEventListener('beforeinstallprompt', (ev) => {
+  ev.preventDefault();
+  pedidoInstalacao = ev;
+  renderInstalar();
+});
+window.addEventListener('appinstalled', () => {
+  pedidoInstalacao = null;
+  renderInstalar();
+  toast('App instalado. Procure o ícone “Inspeção” na tela do celular.', 4000);
+});
+function renderInstalar() {
+  $('btn-instalar').hidden = instalado();
+}
+$('btn-instalar').addEventListener('click', async () => {
+  if (pedidoInstalacao) {
+    pedidoInstalacao.prompt();
+    try { await pedidoInstalacao.userChoice; } catch (e) { /* ok */ }
+    pedidoInstalacao = null;
+    renderInstalar();
+    return;
+  }
+  const ua = navigator.userAgent;
+  const passos = [];
+  let nota = '';
+  if (eIOS()) {
+    if (!/Safari/.test(ua) || /CriOS|FxiOS|EdgiOS/.test(ua)) {
+      passos.push('Abra este endereço no <b>Safari</b>.');
+    }
+    passos.push('Toque no botão <b>Compartilhar</b> (quadrado com seta para cima), na barra do Safari.');
+    passos.push('Role a lista e toque em <b>Adicionar à Tela de Início</b>.');
+    passos.push('Toque em <b>Adicionar</b>.');
+    nota = 'O ícone “Inspeção” aparece na tela do iPhone e abre o app em tela cheia.';
+  } else if (/Android/.test(ua)) {
+    if (/wv\)|FBAN|FBAV|Instagram|WhatsApp/.test(ua)) passos.push('Abra este endereço no <b>Chrome</b> (o navegador dentro de outros apps não instala).');
+    passos.push('Toque no menu <b>⋮</b> no canto superior direito do Chrome.');
+    passos.push('Toque em <b>Instalar app</b> ou <b>Adicionar à tela inicial</b>.');
+    passos.push('Confirme em <b>Instalar</b>.');
+    nota = 'Se a opção não aparecer, o app pode já estar instalado: procure o ícone “Inspeção” na tela do celular.';
+  } else {
+    passos.push('No computador, clique no ícone de instalar na barra de endereço do Chrome ou Edge.');
+    passos.push('No celular, abra este endereço no Chrome (Android) ou no Safari (iPhone) e use “Instalar app” ou “Adicionar à Tela de Início”.');
+  }
+  $('inst-passos').innerHTML = passos.map((p) => `<li>${p}</li>`).join('');
+  $('inst-nota').textContent = nota;
+  $('dlg-instalar').hidden = false;
+});
+$('btn-inst-ok').addEventListener('click', () => { $('dlg-instalar').hidden = true; });
+
 // ------------------------------------------------------------------ ciclo de vida
-window.addEventListener('online', () => { processarFila().catch(() => {}); sincronizarInicio(); if (telaAtual === 'tela-registros') renderRegistros(); });
-window.addEventListener('offline', () => { if (telaAtual === 'tela-registros') renderRegistros(); });
+window.addEventListener('online', () => { processarFila().catch(() => {}); sincronizarInicio(); if (telaAtual === 'tela-registros') renderRegistros(); if (telaAtual === 'tela-relatorios') renderRelatorios(); });
+window.addEventListener('offline', () => { if (telaAtual === 'tela-registros') renderRegistros(); if (telaAtual === 'tela-relatorios') renderRelatorios(); });
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
     if (telaAtual === 'tela-camera') { iniciarVideo(); try { if ('wakeLock' in navigator) navigator.wakeLock.request('screen').then((w) => { estado.wakeLock = w; }); } catch (e) { /* ok */ } }
@@ -851,11 +1325,28 @@ document.addEventListener('visibilitychange', () => {
 setInterval(() => { processarFila().catch(() => {}); }, 60000);
 
 async function iniciar() {
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch((e) => console.warn(e));
+  if ('serviceWorker' in navigator) {
+    const tinhaControle = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!tinhaControle) return;
+      if (telaAtual === 'tela-inicio' || telaAtual === 'tela-codigo') location.reload();
+      else estado.atualizacaoPendente = true;
+    });
+    navigator.serviceWorker.register('sw.js').catch((e) => console.warn(e));
+  }
   pedirPersistencia();
   carregarFonteCarimbo();
   const [ajustes, codigo, nome, servidor] = await Promise.all([db.kvGet('ajustes'), db.kvGet('codigo'), db.kvGet('nome'), db.kvGet('servidor')]);
-  if (ajustes) estado.ajustes = { ...structuredClone(AJUSTES_PADRAO), ...ajustes, opc: { ...AJUSTES_PADRAO.opc, ...(ajustes.opc || {}) } };
+  if (ajustes) {
+    estado.ajustes = { ...structuredClone(AJUSTES_PADRAO), ...ajustes, opc: { ...AJUSTES_PADRAO.opc, ...(ajustes.opc || {}) } };
+    if ((ajustes.v || 1) < 2) {
+      // versão 1.1: cópia na galeria com legenda passa a ser o padrão
+      estado.ajustes.galeria = true;
+      estado.ajustes.galCom = true;
+      estado.ajustes.v = 2;
+      await db.kvSet('ajustes', estado.ajustes);
+    }
+  }
   if (servidor) {
     if (servidor.limite) estado.limite = servidor.limite;
     if (servidor.listas) estado.listas = { ...estado.listas, ...servidor.listas };
@@ -872,6 +1363,11 @@ async function iniciar() {
   }
   irParaInicio();
   iniciarGPS();
+  marcarModoCam();
+  try {
+    const n = await recuperarInterrompidos();
+    if (n) toast(`${n} vídeo(s) interrompido(s) foram recuperados. Veja em Relatórios e envios.`, 5000);
+  } catch (e) { console.warn(e); }
   await garantirBase();
   await verificarRelatorioAberto();
   sincronizarInicio();
