@@ -1,4 +1,5 @@
 import { BaseEstacas, fmtCoord, fmtDist } from './geo.js';
+import { ligarSensor, desligarSensor, giroDaFoto, estadoOrientacao, capturarQuadro } from './orientacao.js';
 import { db, pedirPersistencia } from './db.js';
 import { renderizar, canvasParaBlob, carregarFonteCarimbo } from './stamp.js';
 import { configurarApi, chamar, processarFila, aoMudarFila, apiConfigurada, estaEnviando } from './sync.js';
@@ -18,7 +19,7 @@ const LISTAS_PADRAO = {
 };
 const AJUSTES_PADRAO = {
   opc: { desc: true, seg: false, cid: false, pac: false, infra: false, super: false, oae: false },
-  coord: 'dec', pos: 'inf', tam: 'M',
+  coord: 'dec', pos: 'inf', tam: 'M', orient: 'auto',
   galeria: true, galCom: true, galSem: false,
   vidRes: '720', vidSom: true, vidQueimar: false,
   v: 2,
@@ -384,6 +385,39 @@ async function verificarRelatorioAberto() {
   return true;
 }
 
+/** Reabre um relatório (encerrado ou aberto em outro momento) e volta para a câmera. */
+async function retomarRelatorio(rel) {
+  const atualId = estado.relatorio ? estado.relatorio.id : await db.kvGet('relatorioAberto');
+  const atual = atualId && atualId !== rel.id ? await db.get('relatorios', atualId) : null;
+  const nome = `${rel.tipo}${rel.objeto ? ` · ${rel.objeto}` : ''}`;
+  if (atual && atual.status === 'Aberto') {
+    const nomeAtual = `${atual.tipo}${atual.objeto ? ` · ${atual.objeto}` : ''}`;
+    if (!confirm(`O relatório "${nomeAtual}" está em aberto. Encerrar esse e retomar "${nome}"?`)) return;
+    await encerrarRelatorio(atual);
+  } else if (rel.status === 'Encerrado' && !confirm(`Retomar "${nome}"? Ele volta a ficar aberto e as próximas fotos entram nele.`)) {
+    return;
+  }
+  const regs = (await db.all('registros')).filter((r) => r.idRelatorio === rel.id);
+  const ult = regs.sort((a, b) => b.criadoEm - a.criadoEm)[0];
+  if (rel.status !== 'Aberto') {
+    rel.status = 'Aberto';
+    rel.encerramento = '';
+    rel.encerramentoTs = null;
+    rel.retomadoEm = Date.now();
+    rel.sincronizado = false;
+    await db.put('relatorios', rel);
+  }
+  await db.kvSet('relatorioAberto', rel.id);
+  estado.relatorio = rel;
+  if (!estado.nome) estado.nome = rel.inspetor;
+  estado.modo = 'rel';
+  estado.sessaoAtiva = true;
+  estado.ultimaDesc = ult ? ult.descricao || '' : '';
+  toast(`Relatório retomado: ${nome}`);
+  mostrar('tela-camera');
+  processarFila().catch(() => {});
+}
+
 async function encerrarRelatorio(rel) {
   const regs = (await db.all('registros')).filter((r) => r.idRelatorio === rel.id);
   const agora = new Date();
@@ -414,6 +448,8 @@ async function entrarCamera() {
   }
   marcarModoCam();
   atualizarMiniatura();
+  ligarSensor(atualizarOrientacao);
+  atualizarOrientacao();
   iniciarGPS();
   atualizarPosicao();
   atualizarPreviaCamera();
@@ -424,6 +460,7 @@ async function entrarCamera() {
 }
 
 function sairCamera() {
+  desligarSensor();
   if (estado.gravador && estado.gravador.ativo) estado.gravador.parar().catch(() => {});
   clearInterval(estado.relogio);
   pararVideo();
@@ -513,14 +550,36 @@ $('btn-foto').addEventListener('click', () => {
   if (!exigirGPS()) return;
   const video = $('video');
   if (!estado.stream || !video.videoWidth) { $('in-foto').click(); return; }
-  const w = video.videoWidth;
-  const h = video.videoHeight;
-  const c = document.createElement('canvas');
-  c.width = w;
-  c.height = h;
-  c.getContext('2d').drawImage(video, 0, 0, w, h);
-  iniciarRevisao(c, w, h);
+  const giro = giroDaFoto(estado.ajustes.orient, video.videoWidth, video.videoHeight);
+  const c = capturarQuadro(video, giro);
+  iniciarRevisao(c, c.width, c.height);
 });
+
+// ------------------------------------------------------------------ orientação da foto
+const ROTULO_ORIENT = { auto: 'Automática', horizontal: 'Sempre horizontal', vertical: 'Sempre vertical' };
+function atualizarOrientacao() {
+  const video = estado.modoCam === 'video'; // o vídeo continua na orientação da tela
+  const o = video ? { horizontal: false, giro: 0 } : estadoOrientacao(estado.ajustes.orient);
+  const visor = $('visor');
+  $('orient-chip').hidden = video;
+  visor.classList.toggle('giro90', o.horizontal && o.giro !== 270);
+  visor.classList.toggle('giro270', o.horizontal && o.giro === 270);
+  const chip = $('orient-chip');
+  chip.classList.toggle('deitado', o.horizontal);
+  chip.classList.toggle('fixo', estado.ajustes.orient !== 'auto');
+  $('orient-txt').textContent = `${o.horizontal ? 'Horizontal' : 'Vertical'}${estado.ajustes.orient === 'auto' ? '' : ' (fixa)'}`;
+  chip.setAttribute('aria-label', `Orientação da foto: ${ROTULO_ORIENT[estado.ajustes.orient]}. Toque para trocar.`);
+}
+$('orient-chip').addEventListener('click', () => {
+  const ordem = ['auto', 'horizontal', 'vertical'];
+  estado.ajustes.orient = ordem[(ordem.indexOf(estado.ajustes.orient) + 1) % ordem.length];
+  salvarAjustes();
+  ligarSensor(atualizarOrientacao);
+  atualizarOrientacao();
+  toast(`Orientação da foto: ${ROTULO_ORIENT[estado.ajustes.orient]}${estado.ajustes.orient === 'auto' ? ' (gire o celular para fotografar na horizontal)' : ''}`);
+});
+// No iPhone o sensor só liga depois de um toque na tela.
+document.addEventListener('click', () => { if (telaAtual === 'tela-camera') ligarSensor(atualizarOrientacao); }, { capture: true });
 $('btn-camera-nativa').addEventListener('click', () => { if (exigirGPS()) $('in-foto').click(); });
 $('in-foto').addEventListener('change', async () => {
   const f = $('in-foto').files[0];
@@ -598,6 +657,7 @@ function marcarModoCam() {
   ob.setAttribute('aria-label', v ? 'Iniciar gravação' : 'Tirar foto');
   $('btn-camera-nativa').hidden = v;
   $('cam-titulo').textContent = v ? 'Vídeo' : (estado.relatorio ? `Foto ${estado.nFoto || 1}` : 'Individuais');
+  atualizarOrientacao();
 }
 
 document.querySelectorAll('[data-modo-cam]').forEach((b) => b.addEventListener('click', async () => {
@@ -1020,6 +1080,7 @@ async function salvarAjustes() {
   await db.kvSet('ajustes', estado.ajustes);
   renderConfig();
   atualizarPreviaCamera();
+  atualizarOrientacao();
 }
 
 function renderConfig() {
@@ -1036,6 +1097,7 @@ function renderConfig() {
       onclick: () => { a[chave] = v; salvarAjustes(); },
     }, r))));
   $('linhas-seg').replaceChildren(
+    seg('Orientação da foto', 'orient', [['auto', 'Automática'], ['horizontal', 'Horizontal'], ['vertical', 'Vertical']]),
     seg('Coordenadas', 'coord', [['dec', 'Graus decimais'], ['utm', 'UTM']]),
     seg('Posição', 'pos', [['inf', 'Inferior'], ['sup', 'Superior']]),
     seg('Tamanho', 'tam', [['P', 'P'], ['M', 'M'], ['G', 'G']]),
@@ -1234,7 +1296,8 @@ async function renderRelatorios() {
     const syncRel = rel && !rel.sincronizado && apiConfigurada()
       ? el('span', { class: 'etq pend' }, rel.status === 'Encerrado' ? 'Encerramento não enviado' : 'Relatório não enviado')
       : null;
-    return el('button', {
+    const ativo = rel && estado.sessaoAtiva && estado.relatorio && estado.relatorio.id === rel.id;
+    const cartao = el('button', {
       type: 'button', class: `cartao-rel${rel && rel.status === 'Aberto' ? ' aberto' : ''}`,
       onclick: () => {
         estado.relSel = rel ? rel.id : 'IND';
@@ -1248,6 +1311,14 @@ async function renderRelatorios() {
     el('span', {}, [`${fotos.length} foto(s)`, (() => { const n = vids.filter((x) => (rel ? x.idRelatorio === rel.id : !x.idRelatorio) && x.status !== 'gravando').length; return n ? `${n} vídeo(s) no celular` : ''; })(), trecho, fora ? `${fora} fora da faixa` : ''].filter(Boolean).join(' · ')),
     fotos.length ? el('div', { class: 'barra-prog', role: 'img', 'aria-label': `${pct}% enviado` }, el('span', { style: `width:${pct}%` })) : null,
     el('div', { class: 'rodape' }, el('div', { class: 'etiquetas' }, linhaEnvio, syncRel), fotos.length ? el('span', { class: 'ver' }, 'Ver fotos') : null));
+    if (!rel || ativo) return cartao;
+    return el('div', { class: 'cartao-rel-caixa' }, cartao,
+      (() => {
+        const b = el('button', { type: 'button', class: 'btn-retomar', onclick: () => retomarRelatorio(rel) });
+        b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3 3 3 9 9 9"/></svg>';
+        b.append(rel.status === 'Aberto' ? 'Continuar este relatório' : 'Retomar relatório encerrado');
+        return b;
+      })());
   });
   $('lista-rels').replaceChildren(...(cartoes.length ? cartoes : [el('p', { class: 'vazio' }, grupos.length ? 'Nada com esse filtro.' : 'Nenhum relatório ou foto registrado neste celular ainda.')]));
 }

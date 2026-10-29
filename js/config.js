@@ -3,5 +3,5 @@
 window.APP_CONFIG = {
   apiUrl: 'https://script.google.com/macros/s/AKfycbzFMWVEyNtZIS3JKrtDV4B_pyRgCSAptZ8Un7ZDmBUlbNLEtxJkf0RnNW2-DWnCfAKb/exec',
   limiteFaixaPadrao: 40, // metros; o valor da aba Config da planilha tem prioridade
-  versao: '1.2.1',
+  versao: '1.3.0',
 };
